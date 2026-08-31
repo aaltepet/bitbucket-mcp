@@ -1,0 +1,35 @@
+{
+  "name": "bitbucket-mcp",
+  "version": "5.0.7",
+  "description": "Bitbucket Cloud and Server MCP server",
+  "author": {
+    "name": "Bitbucket MCP Team"
+  },
+  "homepage": "https://github.com/aaltepet/bitbucket-mcp",
+  "repository": "https://github.com/aaltepet/bitbucket-mcp",
+  "license": "MIT",
+  "keywords": ["bitbucket", "mcp", "pull-requests", "pipelines"],
+  "mcpServers": "mcp.json",
+  "variables": {
+    "type": "object",
+    "properties": {
+      "BITBUCKET_TOKEN": {
+        "type": "string",
+        "title": "Bitbucket access token",
+        "description": "Workspace or repository access token. Sent as Authorization: Bearer."
+      },
+      "BITBUCKET_WORKSPACE": {
+        "type": "string",
+        "title": "Bitbucket workspace",
+        "description": "Default workspace slug when a tool call omits workspace."
+      },
+      "BITBUCKET_URL": {
+        "type": "string",
+        "title": "Bitbucket API URL",
+        "description": "API base URL",
+        "default": "https://api.bitbucket.org/2.0"
+      }
+    },
+    "required": ["BITBUCKET_TOKEN"]
+  }
+}

@@ -11,13 +11,6 @@ startCommand:
       BITBUCKET_TOKEN:
         type: string
         description: "Bitbucket access token for authentication"
-      BITBUCKET_USERNAME:
-        type: string
-        description: "Bitbucket username (used with password authentication)"
-      BITBUCKET_PASSWORD:
-        type: string
-        description: "Bitbucket password (used with username authentication)"
-        format: password
       BITBUCKET_WORKSPACE:
         type: string
         description: "Default Bitbucket workspace to use when not specified"
@@ -36,9 +29,7 @@ startCommand:
       BITBUCKET_LOG_PER_CWD:
         type: string
         description: "When true, create a per-working-directory subfolder under BITBUCKET_LOG_DIR"
-    oneOf:
-      - required: ["BITBUCKET_TOKEN"]
-      - required: ["BITBUCKET_USERNAME", "BITBUCKET_PASSWORD"]
+    required: ["BITBUCKET_TOKEN"]
   commandFunction: |-
     (config) => {
       // Setup environment variables based on provided config
@@ -53,12 +44,6 @@ startCommand:
       }
       if (config.BITBUCKET_TOKEN) {
         env.BITBUCKET_TOKEN = config.BITBUCKET_TOKEN;
-      }
-      if (config.BITBUCKET_USERNAME) {
-        env.BITBUCKET_USERNAME = config.BITBUCKET_USERNAME;
-      }
-      if (config.BITBUCKET_PASSWORD) {
-        env.BITBUCKET_PASSWORD = config.BITBUCKET_PASSWORD;
       }
       if (config.BITBUCKET_WORKSPACE) {
         env.BITBUCKET_WORKSPACE = config.BITBUCKET_WORKSPACE;

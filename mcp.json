@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "bitbucket": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/dist/index.js"],
+      "env": {
+        "BITBUCKET_TOKEN": "${BITBUCKET_TOKEN}",
+        "BITBUCKET_WORKSPACE": "${BITBUCKET_WORKSPACE}",
+        "BITBUCKET_URL": "${BITBUCKET_URL}"
+      }
+    }
+  }
+}

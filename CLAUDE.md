@@ -49,7 +49,7 @@ The entire server implementation lives in `src/index.ts` (~4,500 lines). This in
 ### Core Components
 
 **BitbucketClient Class**: Main API wrapper that handles:
-- Axios-based HTTP client with authentication (token or username/password)
+- Axios-based HTTP client with Bearer token authentication (`BITBUCKET_TOKEN`)
 - URL normalization (converts web URLs like `bitbucket.org/workspace` to API URLs)
 - All Bitbucket API operations grouped by category:
   - Repository operations (list, get details)
@@ -61,7 +61,7 @@ The entire server implementation lives in `src/index.ts` (~4,500 lines). This in
 
 **Environment Configuration**:
 - `BITBUCKET_URL`: API base URL (defaults to https://api.bitbucket.org/2.0)
-- `BITBUCKET_TOKEN` OR `BITBUCKET_USERNAME` + `BITBUCKET_PASSWORD`: Authentication
+- `BITBUCKET_TOKEN`: Required Bitbucket access token (Bearer auth)
 - `BITBUCKET_WORKSPACE`: Default workspace (auto-extracted from URL if not provided)
 - `BITBUCKET_ENABLE_DANGEROUS`: Enable destructive operations (disabled by default)
 - `BITBUCKET_LOG_*`: Logging configuration (file, directory, disable, per-CWD)
@@ -85,11 +85,7 @@ The `normalizeBitbucketConfig()` function handles backward compatibility:
 ## Key Implementation Details
 
 ### Authentication
-Supports two methods (checked in order):
-1. Token authentication via `BITBUCKET_TOKEN`
-2. Basic auth via `BITBUCKET_USERNAME` + `BITBUCKET_PASSWORD`
-
-Note: `BITBUCKET_USERNAME` is typically your email address for Bitbucket Cloud.
+Bearer token only via `BITBUCKET_TOKEN`. Username/password (app passwords / Atlassian API tokens) is not supported.
 
 ### Inline PR Comments
 Uses special inline parameter format:
@@ -102,7 +98,7 @@ Uses special inline parameter format:
 ```
 
 ### Pipeline Operations
-Requires "Pipelines: Read" permission in Bitbucket app password. Target configuration uses:
+Requires "Pipelines: Read" on the access token. Target configuration uses:
 - `ref_type` + `ref_name` for branch/tag
 - Optional `commit_hash` for specific commit
 - Optional `selector_type` + `selector_pattern` for pipeline selection

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Require `BITBUCKET_TOKEN` only; removed `BITBUCKET_USERNAME` / `BITBUCKET_PASSWORD` basic auth.
+- Document Cursor **Settings → Customize** setup, including **+ Add** from a GitHub or local repository, and add a plugin manifest so those install paths work.
 - Hardened credential logging: Winston redacts Authorization headers/tokens; tool call logs no longer dump argument values.
 - Allowlist pagination `next` URLs to the configured Bitbucket API origin to prevent auth-header forwarding to attacker hosts.
 - Widened `BITBUCKET_ENABLE_DANGEROUS` gating: only read-only tools are enabled by default; merges, PR writes, comments, pipelines, deletes, and branching-model updates require the flag.

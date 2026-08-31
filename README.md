@@ -1,199 +1,111 @@
 # Bitbucket MCP
 
-A Model Context Protocol (MCP) server for integrating with Bitbucket Cloud and Server APIs. This MCP server enables AI assistants like Cursor to interact with your Bitbucket repositories, pull requests, and other resources.
+A [Model Context Protocol](https://modelcontextprotocol.io/) server for Bitbucket Cloud and Server. It gives Cursor (and other MCP clients) tools to list repositories, inspect pull requests, read pipelines, and more.
+
+This is a team-maintained fork, run from a local clone and not the public npm package.
+
+[![CodeQL](https://github.com/aaltepet/bitbucket-mcp/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/aaltepet/bitbucket-mcp/actions/workflows/github-code-scanning/codeql)
+[![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue.svg)](https://github.com/aaltepet/bitbucket-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Safety First
 
 Destructive and mutating tools (merge, decline, approve, create/update PRs, comments, pipelines, deletes, branching-model updates, etc.) are disabled unless `BITBUCKET_ENABLE_DANGEROUS=true`. Read-only tools remain available by default. Logs redact Bitbucket credentials, pagination `next` links are origin-allowlisted, and path/query inputs are encoded/escaped.
 
-[![CodeQL](https://github.com/MatanYemini/bitbucket-mcp/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/MatanYemini/bitbucket-mcp/actions/workflows/github-code-scanning/codeql)
-[![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue.svg)](https://github.com/MatanYemini/bitbucket-mcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![npm version](https://badge.fury.io/js/bitbucket-mcp.svg)](https://www.npmjs.com/package/bitbucket-mcp)
+## Setup
 
-## Overview
+### 1. Clone and build
 
-Checkout out the [official npm package](https://www.npmjs.com/package/bitbucket-mcp)
-This server implements the Model Context Protocol standard to provide AI assistants with access to Bitbucket data and operations. It includes tools for:
-
-- Listing and retrieving repositories
-- Getting repository details
-- Fetching pull requests
-- And more...
-
-## Installation
-
--- Since it has been asked, in many cases we have seen - "BITBUCKET_USERNAME" is usually your email
-
-### Using NPX (Recommended)
-
-The easiest way to use this MCP server is via NPX, which allows you to run it without installing it globally:
+Requires Node.js 18 or newer.
 
 ```bash
-# Option A (recommended): API URL + explicit workspace
-BITBUCKET_URL="https://api.bitbucket.org/2.0" \
-BITBUCKET_WORKSPACE="your-workspace" \
-BITBUCKET_USERNAME="your-username" \
-BITBUCKET_PASSWORD="your-app-password" \
-npx -y bitbucket-mcp@latest
-
-# Option B (legacy-compatible): web URL only; workspace is auto-extracted
-BITBUCKET_URL="https://bitbucket.org/your-workspace" \
-BITBUCKET_USERNAME="your-username" \
-BITBUCKET_PASSWORD="your-app-password" \
-npx -y bitbucket-mcp@latest
+git clone git@github.com:aaltepet/bitbucket-mcp.git
+cd bitbucket-mcp
+npm install
+npm run build
 ```
 
-### Manual Installation
+`npm run build` compiles TypeScript to `dist/index.js`. After pulling updates, run `npm install` and `npm run build` again.
 
-Alternatively, you can install it globally or as part of your project:
+### 2. Create a Bitbucket access token
+
+The server authenticates with `BITBUCKET_TOKEN` as a Bearer token. Create a [workspace access token](https://support.atlassian.com/bitbucket-cloud/docs/create-a-workspace-access-token/) or a [repository access token](https://support.atlassian.com/bitbucket-cloud/docs/create-a-repository-access-token/).
+
+1. In Bitbucket, open the workspace or repository, then **Settings → Access tokens**.
+2. Create a token and grant at least:
+   - **Repositories: Read**
+   - **Pull requests: Read**
+   - **Pipelines: Read** (needed for pipeline tools)
+3. Add **Write** scopes only if you will set `BITBUCKET_ENABLE_DANGEROUS=true`.
+4. Copy the token immediately. Bitbucket shows it once.
+
+Do not commit the token. Enter it when you add the MCP in Cursor (next step).
+
+To confirm the token works:
 
 ```bash
-# Install globally
-npm install -g bitbucket-mcp
-
-# Or install in your project
-npm install bitbucket-mcp
+curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  "https://api.bitbucket.org/2.0/repositories/YOUR_WORKSPACE"
 ```
 
-Then run it with:
+### 3. Add the MCP in Cursor
 
-```bash
-# If installed globally (Option A)
-BITBUCKET_URL="https://api.bitbucket.org/2.0" \
-BITBUCKET_WORKSPACE="your-workspace" \
-BITBUCKET_USERNAME="your-username" \
-BITBUCKET_PASSWORD="your-app-password" \
-bitbucket-mcp
+Open **Cursor Settings → Customize**, then click **+ Add**.
 
-# If installed globally (Option B - legacy-compatible)
-BITBUCKET_URL="https://bitbucket.org/your-workspace" \
-BITBUCKET_USERNAME="your-username" \
-BITBUCKET_PASSWORD="your-app-password" \
-bitbucket-mcp
+**From Local Repository** (recommended after you clone and build):
 
-# If installed in your project (Option A)
-BITBUCKET_URL="https://api.bitbucket.org/2.0" \
-BITBUCKET_WORKSPACE="your-workspace" \
-BITBUCKET_USERNAME="your-username" \
-BITBUCKET_PASSWORD="your-app-password" \
-npx bitbucket-mcp
+1. Choose **From Local Repository**.
+2. Select the `bitbucket-mcp` folder you cloned.
+3. When prompted, set:
+   - `BITBUCKET_TOKEN` — the access token from step 2
+   - `BITBUCKET_WORKSPACE` — your workspace slug
+   - `BITBUCKET_URL` — `https://api.bitbucket.org/2.0` unless you use Bitbucket Server
+4. Confirm the server is connected and that Bitbucket tools appear.
 
-# If installed in your project (Option B - legacy-compatible)
-BITBUCKET_URL="https://bitbucket.org/your-workspace" \
-BITBUCKET_USERNAME="your-username" \
-BITBUCKET_PASSWORD="your-app-password" \
-npx bitbucket-mcp
-```
+**From GitHub Repository**:
+
+1. Choose **From GitHub Repository**.
+2. Enter `https://github.com/aaltepet/bitbucket-mcp`.
+3. Set the same variables as above.
+
+This repo includes a Cursor plugin manifest (`.cursor-plugin/plugin.json`) and `mcp.json` so Customize can discover the server. The process still runs `node dist/index.js`, so `npm run build` must have succeeded in the checkout Cursor is using. If a GitHub install does not start, clone locally, build, and add **From Local Repository** instead.
+
+You can still edit `~/.cursor/mcp.json` or `.cursor/mcp.json` by hand. Cursor merges both; a project file wins when the same server name appears in both.
 
 ## Configuration
 
-### Environment Variables
-
-Configure the server using the following environment variables:
-
 | Variable                     | Description                                                                    | Required |
 | ---------------------------- | ------------------------------------------------------------------------------ | -------- |
-| `BITBUCKET_URL`              | Bitbucket API base URL. Defaults to `https://api.bitbucket.org/2.0`            | No       |
-| `BITBUCKET_USERNAME`         | Your Bitbucket username                                                        | Yes\*    |
-| `BITBUCKET_PASSWORD`         | Your Bitbucket app password                                                    | Yes\*    |
-| `BITBUCKET_TOKEN`            | Your Bitbucket access token (alternative to username/password)                 | No       |
-| `BITBUCKET_WORKSPACE`        | Default workspace to use. If omitted and `BITBUCKET_URL` contains it, auto-set | No       |
-| `BITBUCKET_ENABLE_DANGEROUS` | Set to `true` to enable mutating tools (merge/decline/approve, create/update PRs, comments, pipelines, deletes, branching-model updates). Default: disabled — only read tools are exposed | No       |
+| `BITBUCKET_TOKEN`            | Bitbucket access token (sent as `Authorization: Bearer`)                       | Yes      |
+| `BITBUCKET_URL`              | API base URL. Defaults to `https://api.bitbucket.org/2.0`                      | No       |
+| `BITBUCKET_WORKSPACE`        | Default workspace. Auto-set if `BITBUCKET_URL` is a `bitbucket.org/<workspace>` web URL | No       |
+| `BITBUCKET_ENABLE_DANGEROUS` | Set to `true` to enable mutating tools. Default: read-only tools only          | No       |
 | `BITBUCKET_LOG_DISABLE`      | Disable file logging when set to `true`/`1`                                    | No       |
 | `BITBUCKET_LOG_FILE`         | Absolute path to a specific log file                                           | No       |
 | `BITBUCKET_LOG_DIR`          | Directory to store logs (defaults to OS-specific app log dir)                  | No       |
 | `BITBUCKET_LOG_PER_CWD`      | When `true`, nest logs under a per-working-directory subfolder                 | No       |
 
-Either `BITBUCKET_TOKEN` or both `BITBUCKET_USERNAME` and `BITBUCKET_PASSWORD` must be provided.
-
-### Creating a Bitbucket App Password
-
-1. Log in to your Bitbucket account
-2. Go to Personal Settings > App Passwords
-3. Create a new app password with the following permissions:
-   - Repositories: Read
-   - Pull requests: Read, Write
-   - Pipelines: Read (required for pipeline operations)
-4. Copy the generated password and use it as the `BITBUCKET_PASSWORD` environment variable
-
 ## Troubleshooting
+
+### Server does not connect in Cursor
+
+1. Confirm `npm run build` succeeded so `dist/index.js` exists in the repo you added.
+2. Open **Cursor Settings → Customize**, find the Bitbucket MCP, and confirm `BITBUCKET_TOKEN` is set.
+3. Toggle the server off/on, or restart Cursor.
+4. Open the Output panel (**View → Output**), select **MCP Logs**, and look for startup or auth errors.
 
 ### 401 Authentication Errors
 
-If you're getting 401 authentication errors, check the following:
-
-1. **Verify your app password**: Make sure you're using an App Password, not your regular Bitbucket password
-1. **Verify app password permissions**: Your app password needs at least "Repositories: Read" permission
-1. **Try the API URL format**: If you're still getting 401 errors, try using the direct API URL format:
-
-```bash
-BITBUCKET_URL="https://api.bitbucket.org/2.0"
-```
-
-1. **Test API access**: Verify your credentials work by testing the Bitbucket API directly:
-
-```bash
-# Test with curl (replace with your actual values)
-curl -u "your-username:your-app-password" \
-  "https://api.bitbucket.org/2.0/repositories/your-workspace"
-```
-
-### Atlassian API Key 
-
-1. Put the Atlassian API Key in the `BITBUCKET_PASSWORD` variable, not `BITBUCKET_TOKEN`
-2. Use your Bitbucket email as `BITBUCKET_USERNAME` instead of your regular username
-
-For reference you can check the [API token documentation](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/)
+1. Confirm you are using a Bitbucket **access token** in `BITBUCKET_TOKEN`, not your account password.
+2. Confirm the token still exists, has not expired, and includes **Repositories: Read**.
+3. Use the API base URL `https://api.bitbucket.org/2.0`.
+4. Test the token with the `curl` command in [Create a Bitbucket access token](#2-create-a-bitbucket-access-token).
 
 ### Getting Help
 
-If you encounter issues:
-
-1. Check the [Bitbucket REST API documentation](https://developer.atlassian.com/cloud/bitbucket/rest/intro/) for API details
-2. Review the [Bitbucket Cloud documentation](https://support.atlassian.com/bitbucket-cloud/) for general help
-
-## Integration with Cursor
-
-To integrate this MCP server with Cursor:
-
-1. Open Cursor
-2. Go to Settings > Extensions
-3. Click on "Model Context Protocol"
-4. Add a new MCP configuration:
-
-```json
-"bitbucket": {
-  "command": "npx",
-  "env": {
-    "BITBUCKET_URL": "https://api.bitbucket.org/2.0",
-    "BITBUCKET_WORKSPACE": "your-workspace",
-    "BITBUCKET_USERNAME": "your-username",
-    "BITBUCKET_PASSWORD": "your-app-password"
-  },
-  "args": ["-y", "bitbucket-mcp@latest"]
-}
-```
-
-1. Save the configuration
-2. Use the "/bitbucket" command in Cursor to access Bitbucket repositories and pull requests
-
-### Using a Local Build with Cursor
-
-If you're developing locally and want to test your changes:
-
-```json
-"bitbucket-local": {
-  "command": "node",
-  "env": {
-    "BITBUCKET_URL": "https://api.bitbucket.org/2.0",
-    "BITBUCKET_WORKSPACE": "your-workspace",
-    "BITBUCKET_USERNAME": "your-username",
-    "BITBUCKET_PASSWORD": "your-app-password"
-  },
-  "args": ["/path/to/your/local/bitbucket-mcp/dist/index.js"]
-}
-```
+1. [Bitbucket REST API documentation](https://developer.atlassian.com/cloud/bitbucket/rest/intro/)
+2. [Bitbucket Cloud documentation](https://support.atlassian.com/bitbucket-cloud/)
+3. [Cursor MCP documentation](https://cursor.com/docs/context/mcp)
 
 ## Available Tools
 
@@ -702,46 +614,16 @@ Gets logs for a specific pipeline step.
 
 ## Development
 
-### Prerequisites
-
-- Node.js 18 or higher
-- npm or yarn
-
-### Setup
+After the [clone and build](#1-clone-and-build) steps:
 
 ```bash
-# Clone the repository
-git clone https://github.com/MatanYemini/bitbucket-mcp.git
-cd bitbucket-mcp
-
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
-
-# Run in development mode
-npm run dev
+npm run dev      # watch mode (tsx)
+npm test         # Jest
+npm run lint     # ESLint
+npm run inspector  # MCP inspector against dist/index.js
 ```
 
-## Publishing to the MCP Registry
-
-Use the official Model Context Protocol publishing guide when you are ready to make a new server release. The repository includes
-everything that guide expects:
-
-1. Build the project so `dist/index.js` is up to date:
-   ```bash
-   npm run build
-   ```
-2. Generate the registry manifest (this reads `package.json` and emits `registry/bitbucket-mcp.manifest.json`):
-   ```bash
-   npm run registry:manifest
-   ```
-3. Follow the [publish-server guide](https://github.com/modelcontextprotocol/registry/blob/main/docs/guides/publishing/publish-server.md)
-   to push the manifest with `smithery publish` or the recommended workflow from the guide.
-
-The generated manifest captures the CLI command (`node dist/index.js`), all documented configuration options, and pointers back to
-this README for setup instructions, so it can be submitted directly to the MCP registry.
+Rebuild (`npm run build`) and toggle the Cursor MCP server after you change TypeScript sources. Cursor runs `dist/index.js`, not `src/`.
 
 ## License
 
@@ -749,8 +631,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Links
 
-- [GitHub Repository](https://github.com/MatanYemini/bitbucket-mcp)
-- [npm Package](https://www.npmjs.com/package/bitbucket-mcp)
+- [This fork](https://github.com/aaltepet/bitbucket-mcp)
+- [Upstream](https://github.com/MatanYemini/bitbucket-mcp)
 - [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Cursor MCP documentation](https://cursor.com/docs/context/mcp)
 - [Bitbucket REST API Documentation](https://developer.atlassian.com/cloud/bitbucket/rest/intro/)
 - [Bitbucket Cloud Documentation](https://support.atlassian.com/bitbucket-cloud/)

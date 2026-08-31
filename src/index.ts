@@ -324,9 +324,7 @@ interface BitbucketProjectBranchingModel {
 
 interface BitbucketConfig {
   baseUrl: string;
-  token?: string;
-  username?: string;
-  password?: string;
+  token: string;
   defaultWorkspace?: string;
   allowDangerousCommands?: boolean;
 }
@@ -535,9 +533,7 @@ class BitbucketServer {
     // Configuration from environment variables
     const initialConfig: BitbucketConfig = {
       baseUrl: process.env.BITBUCKET_URL ?? "https://api.bitbucket.org/2.0",
-      token: process.env.BITBUCKET_TOKEN,
-      username: process.env.BITBUCKET_USERNAME,
-      password: process.env.BITBUCKET_PASSWORD,
+      token: process.env.BITBUCKET_TOKEN ?? "",
       defaultWorkspace: process.env.BITBUCKET_WORKSPACE,
     };
 
@@ -573,24 +569,15 @@ class BitbucketServer {
       throw new Error("BITBUCKET_URL is required");
     }
 
-    if (!this.config.token && !(this.config.username && this.config.password)) {
-      throw new Error(
-        "Either BITBUCKET_TOKEN or BITBUCKET_USERNAME/PASSWORD is required"
-      );
+    if (!this.config.token) {
+      throw new Error("BITBUCKET_TOKEN is required");
     }
 
-    // Setup Axios instance
-    const headers: Record<string, string> = {};
-    if (this.config.token) {
-      headers.Authorization = `Bearer ${this.config.token}`;
-    }
     this.api = axios.create({
       baseURL: this.config.baseUrl,
-      headers,
-      auth:
-        this.config.username && this.config.password
-          ? { username: this.config.username, password: this.config.password }
-          : undefined,
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+      },
     });
 
     this.paginator = new BitbucketPaginator(this.api, logger, {
@@ -1326,7 +1313,7 @@ class BitbucketServer {
         {
           name: "getPendingReviewPRs",
           description:
-            "List all open pull requests in the workspace where the authenticated user is a reviewer and has not yet approved.",
+            "List all open pull requests in the workspace where the reviewer is assigned and has not yet approved. Resolves the reviewer from GET /user unless reviewer is provided.",
           inputSchema: {
             type: "object",
             properties: {
@@ -1343,6 +1330,11 @@ class BitbucketServer {
                 type: "array",
                 items: { type: "string" },
                 description: "List of repository slugs to check (optional)",
+              },
+              reviewer: {
+                type: "string",
+                description:
+                  "Reviewer nickname to match. Optional when the access token can call GET /user.",
               },
             },
           },
@@ -2128,7 +2120,8 @@ class BitbucketServer {
             return await this.getPendingReviewPRs(
               args.workspace as string | undefined,
               args.limit as number,
-              args.repositoryList as string[]
+              args.repositoryList as string[],
+              args.reviewer as string | undefined
             );
           case "listPipelineRuns":
             return await this.listPipelineRuns(
@@ -3715,10 +3708,30 @@ class BitbucketServer {
     }
   }
 
+  private async resolveCurrentUserNickname(): Promise<string | undefined> {
+    try {
+      const response = await this.api.get("/user");
+      const user = response.data as {
+        nickname?: string;
+        username?: string;
+      };
+      const nickname = user.nickname || user.username;
+      return typeof nickname === "string" && nickname.trim().length > 0
+        ? nickname.trim()
+        : undefined;
+    } catch (error) {
+      logger.error("Failed to resolve current user from GET /user", {
+        error: sanitizeForLog(error),
+      });
+      return undefined;
+    }
+  }
+
   async getPendingReviewPRs(
     workspace?: string,
     limit: number = 50,
-    repositoryList?: string[]
+    repositoryList?: string[],
+    reviewer?: string
   ) {
     try {
       const wsName = workspace || this.config.defaultWorkspace;
@@ -3729,17 +3742,18 @@ class BitbucketServer {
         );
       }
 
-      const currentUserNickname = this.config.username;
+      const currentUserNickname =
+        reviewer?.trim() || (await this.resolveCurrentUserNickname());
       if (!currentUserNickname) {
         throw new McpError(
           ErrorCode.InvalidParams,
-          "Username must be provided through BITBUCKET_USERNAME environment variable"
+          "Could not resolve the reviewer. Pass reviewer, or use a user-scoped access token that can call GET /user."
         );
       }
 
       logger.info("Getting pending review PRs", {
         workspace: wsName,
-        username: currentUserNickname,
+        reviewer: currentUserNickname,
         repositoryList: repositoryList?.length || "all repositories",
         limit,
       });

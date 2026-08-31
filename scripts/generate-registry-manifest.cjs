@@ -34,15 +34,6 @@ const manifest = {
         type: 'string',
         description: 'Bitbucket access token for authentication'
       },
-      BITBUCKET_USERNAME: {
-        type: 'string',
-        description: 'Bitbucket username (used with password authentication)'
-      },
-      BITBUCKET_PASSWORD: {
-        type: 'string',
-        description: 'Bitbucket app password (used with username authentication)',
-        format: 'password'
-      },
       BITBUCKET_WORKSPACE: {
         type: 'string',
         description: 'Default Bitbucket workspace to use when not specified'
@@ -68,10 +59,7 @@ const manifest = {
         description: 'When true, create a per-working-directory subfolder under BITBUCKET_LOG_DIR'
       }
     },
-    oneOf: [
-      { required: ['BITBUCKET_TOKEN'] },
-      { required: ['BITBUCKET_USERNAME', 'BITBUCKET_PASSWORD'] }
-    ]
+    required: ['BITBUCKET_TOKEN']
   },
   documentation: {
     guide: 'https://github.com/modelcontextprotocol/registry/blob/main/docs/guides/publishing/publish-server.md',
