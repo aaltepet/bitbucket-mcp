@@ -58,7 +58,7 @@ Open **Cursor Settings → Customize**, then click **+ Add**.
 2. Select the `bitbucket-mcp` folder you cloned.
 3. When prompted, set:
    - `BITBUCKET_TOKEN` — the access token from step 2
-   - `BITBUCKET_WORKSPACE` — your workspace slug
+   - `BITBUCKET_WORKSPACE` — your workspace slug, e.g. `invenshure`
    - `BITBUCKET_URL` — `https://api.bitbucket.org/2.0` unless you use Bitbucket Server
 4. Confirm the server is connected and that Bitbucket tools appear.
 
