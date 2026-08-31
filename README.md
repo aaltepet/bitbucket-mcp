@@ -4,8 +4,7 @@ A Model Context Protocol (MCP) server for integrating with Bitbucket Cloud and S
 
 ## Safety First
 
-This is a safe and responsible package — no DELETE operations are used, so there's no risk of data loss.
-Every pull request is analyzed with CodeQL to ensure the code remains secure.
+Destructive and mutating tools (merge, decline, approve, create/update PRs, comments, pipelines, deletes, branching-model updates, etc.) are disabled unless `BITBUCKET_ENABLE_DANGEROUS=true`. Read-only tools remain available by default. Logs redact Bitbucket credentials, pagination `next` links are origin-allowlisted, and path/query inputs are encoded/escaped.
 
 [![CodeQL](https://github.com/MatanYemini/bitbucket-mcp/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/MatanYemini/bitbucket-mcp/actions/workflows/github-code-scanning/codeql)
 [![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue.svg)](https://github.com/MatanYemini/bitbucket-mcp)
@@ -100,7 +99,7 @@ Configure the server using the following environment variables:
 | `BITBUCKET_PASSWORD`         | Your Bitbucket app password                                                    | Yes\*    |
 | `BITBUCKET_TOKEN`            | Your Bitbucket access token (alternative to username/password)                 | No       |
 | `BITBUCKET_WORKSPACE`        | Default workspace to use. If omitted and `BITBUCKET_URL` contains it, auto-set | No       |
-| `BITBUCKET_ENABLE_DANGEROUS` | Set to `true` to enable dangerous tools (e.g., deletions). Default: disabled   | No       |
+| `BITBUCKET_ENABLE_DANGEROUS` | Set to `true` to enable mutating tools (merge/decline/approve, create/update PRs, comments, pipelines, deletes, branching-model updates). Default: disabled — only read tools are exposed | No       |
 | `BITBUCKET_LOG_DISABLE`      | Disable file logging when set to `true`/`1`                                    | No       |
 | `BITBUCKET_LOG_FILE`         | Absolute path to a specific log file                                           | No       |
 | `BITBUCKET_LOG_DIR`          | Directory to store logs (defaults to OS-specific app log dir)                  | No       |

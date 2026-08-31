@@ -23,7 +23,7 @@ startCommand:
         description: "Default Bitbucket workspace to use when not specified"
       BITBUCKET_ENABLE_DANGEROUS:
         type: string
-        description: "Set to true to enable dangerous tools (e.g., deletions)"
+        description: "Set to true to enable mutating tools (merge, PR writes, pipelines, deletes, etc.)"
       BITBUCKET_LOG_DISABLE:
         type: string
         description: "Disable file logging when set to true/1"

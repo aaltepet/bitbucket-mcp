@@ -2,21 +2,24 @@ import { jest } from "@jest/globals";
 import type { AxiosInstance } from "axios";
 import { BitbucketPaginator, BITBUCKET_MAX_PAGELEN } from "../src/pagination.js";
 
+const allowlist = { baseUrl: "https://api.bitbucket.org/2.0" };
+
 const createMockAxios = () => {
   return {
     get: jest.fn(),
   } as unknown as AxiosInstance & { get: jest.Mock };
 };
 
-const createMockLogger = () => ({
-  debug: jest.fn(),
-}) as any;
+const createMockLogger = () =>
+  ({
+    debug: jest.fn(),
+  }) as any;
 
 describe("BitbucketPaginator", () => {
   it("respects pagelen and page arguments", async () => {
     const axios = createMockAxios();
     const logger = createMockLogger();
-    const paginator = new BitbucketPaginator(axios, logger);
+    const paginator = new BitbucketPaginator(axios, logger, allowlist);
 
     (axios.get as any).mockResolvedValue({
       data: { values: [{ id: 1 }], page: 1, pagelen: 1 },
@@ -38,23 +41,25 @@ describe("BitbucketPaginator", () => {
   it("caps pagelen to Bitbucket maximum", async () => {
     const axios = createMockAxios();
     const logger = createMockLogger();
-    const paginator = new BitbucketPaginator(axios, logger);
+    const paginator = new BitbucketPaginator(axios, logger, allowlist);
 
     (axios.get as any).mockResolvedValue({
       data: { values: [], pagelen: BITBUCKET_MAX_PAGELEN },
     });
 
-    await paginator.fetchValues("/test", { pagelen: BITBUCKET_MAX_PAGELEN + 25 });
+    await paginator.fetchValues("/test", {
+      pagelen: BITBUCKET_MAX_PAGELEN + 25,
+    });
 
     expect(axios.get).toHaveBeenCalledWith("/test", {
       params: { pagelen: BITBUCKET_MAX_PAGELEN },
     });
   });
 
-  it("follows next links when all=true", async () => {
+  it("follows next links when all=true and URL is allowlisted", async () => {
     const axios = createMockAxios();
     const logger = createMockLogger();
-    const paginator = new BitbucketPaginator(axios, logger);
+    const paginator = new BitbucketPaginator(axios, logger, allowlist);
 
     (axios.get as any)
       .mockResolvedValueOnce({
@@ -80,5 +85,24 @@ describe("BitbucketPaginator", () => {
     expect(result.values.map((item) => item.id)).toEqual([1, 2]);
     expect(result.fetchedPages).toBe(2);
     expect(result.totalFetched).toBe(2);
+  });
+
+  it("refuses to follow next links outside the allowlisted origin", async () => {
+    const axios = createMockAxios();
+    const logger = createMockLogger();
+    const paginator = new BitbucketPaginator(axios, logger, allowlist);
+
+    (axios.get as any).mockResolvedValueOnce({
+      data: {
+        values: [{ id: 1 }],
+        next: "https://attacker.example/exfil",
+      },
+    });
+
+    await expect(
+      paginator.fetchValues("/test", { all: true })
+    ).rejects.toThrow(/Refusing to follow pagination next URL/);
+
+    expect(axios.get).toHaveBeenCalledTimes(1);
   });
 });

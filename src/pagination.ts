@@ -1,5 +1,9 @@
 import type { AxiosInstance } from "axios";
 import type winston from "winston";
+import {
+  assertAllowedNextUrl,
+  type AllowedNextUrlOptions,
+} from "./security.js";
 
 export const BITBUCKET_DEFAULT_PAGELEN = 10;
 export const BITBUCKET_MAX_PAGELEN = 100;
@@ -33,7 +37,8 @@ interface PendingRequestConfig {
 export class BitbucketPaginator {
   constructor(
     private readonly api: AxiosInstance,
-    private readonly logger: winston.Logger
+    private readonly logger: winston.Logger,
+    private readonly nextUrlAllowlist: AllowedNextUrlOptions
   ) {}
 
   async fetchValues<T>(
@@ -124,14 +129,17 @@ export class BitbucketPaginator {
         break;
       }
 
+      const nextUrl = String(response.data.next);
+      assertAllowedNextUrl(nextUrl, this.nextUrlAllowlist);
+
       this.logger.debug("Following Bitbucket pagination next link", {
         description: description ?? path,
-        next: response.data.next,
+        next: nextUrl,
         fetchedPages,
         totalFetched: aggregated.length,
       });
 
-      nextRequest = { url: response.data.next };
+      nextRequest = { url: nextUrl };
     }
 
     if (aggregated.length > maxItems) {

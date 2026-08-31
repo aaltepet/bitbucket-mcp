@@ -19,6 +19,12 @@ import {
   BITBUCKET_DEFAULT_PAGELEN,
   BITBUCKET_MAX_PAGELEN,
 } from "./pagination.js";
+import {
+  buildRepositoryNameFilter,
+  encodePathSegment,
+  redactSecretsFormat,
+  sanitizeForLog,
+} from "./security.js";
 
 // =========== LOGGER SETUP ==========
 // File-based logging with sensible defaults and ability to disable
@@ -81,7 +87,7 @@ function getLogFilePath(): string | undefined {
 const resolvedLogFile = getLogFilePath();
 const logger = winston.createLogger({
   level: "info",
-  format: winston.format.json(),
+  format: winston.format.combine(redactSecretsFormat(), winston.format.json()),
   transports: resolvedLogFile
     ? [new winston.transports.File({ filename: resolvedLogFile })]
     : [],
@@ -476,15 +482,40 @@ class BitbucketServer {
   private readonly api: AxiosInstance;
   private readonly config: BitbucketConfig;
   private readonly paginator: BitbucketPaginator;
-  private readonly dangerousToolNames = new Set<string>([
-    "deletePullRequestComment",
-    "deletePullRequestTask",
+  /**
+   * Read-only tools that remain available without BITBUCKET_ENABLE_DANGEROUS.
+   * Everything else (writes, merges, pipelines, deletes, etc.) is gated.
+   */
+  private readonly safeToolNames = new Set<string>([
+    "listRepositories",
+    "getRepository",
+    "getPullRequests",
+    "getPullRequest",
+    "getPullRequestActivity",
+    "getPullRequestComments",
+    "getPullRequestComment",
+    "getPullRequestDiff",
+    "getPullRequestDiffStat",
+    "getPullRequestPatch",
+    "getPullRequestCommits",
+    "getPullRequestTasks",
+    "getPullRequestTask",
+    "getPullRequestStatuses",
+    "getRepositoryBranchingModel",
+    "getRepositoryBranchingModelSettings",
+    "getEffectiveRepositoryBranchingModel",
+    "getProjectBranchingModel",
+    "getProjectBranchingModelSettings",
+    "getPendingReviewPRs",
+    "listPipelineRuns",
+    "getPipelineRun",
+    "getPipelineSteps",
+    "getPipelineStep",
+    "getPipelineStepLogs",
+    "getEffectiveDefaultReviewers",
   ]);
   private isDangerousTool(name: string): boolean {
-    // Explicitly dangerous or conservative prefix match (delete*)
-    if (this.dangerousToolNames.has(name)) return true;
-    if (/^delete/i.test(name)) return true;
-    return false;
+    return !this.safeToolNames.has(name);
   }
 
   constructor() {
@@ -562,13 +593,16 @@ class BitbucketServer {
           : undefined,
     });
 
-    this.paginator = new BitbucketPaginator(this.api, logger);
+    this.paginator = new BitbucketPaginator(this.api, logger, {
+      baseUrl: this.config.baseUrl,
+    });
 
     // Setup tool handlers using the request handler pattern
     this.setupToolHandlers();
 
     // Add error handler - CRITICAL for stability
-    this.server.onerror = (error) => logger.error("[MCP Error]", error);
+    this.server.onerror = (error) =>
+      logger.error("[MCP Error]", { error: sanitizeForLog(error) });
   }
 
   private setupToolHandlers() {
@@ -1876,11 +1910,11 @@ class BitbucketServer {
     // Register the call tool handler
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
-        logger.info(`Called tool: ${request.params.name}`, {
-          arguments: request.params.arguments,
-        });
         const args = request.params.arguments ?? {};
         const toolName = request.params.name;
+        logger.info(`Called tool: ${toolName}`, {
+          argumentKeys: Object.keys(args),
+        });
 
         // Guard dangerous tools when not enabled
         if (
@@ -1889,7 +1923,7 @@ class BitbucketServer {
         ) {
           throw new McpError(
             ErrorCode.MethodNotFound,
-            `Tool ${toolName} is disabled. Set BITBUCKET_ENABLE_DANGEROUS=true to enable.`
+            `Tool ${toolName} is disabled. Set BITBUCKET_ENABLE_DANGEROUS=true to enable write/merge/pipeline tools.`
           );
         }
 
@@ -2281,7 +2315,9 @@ class BitbucketServer {
             );
         }
       } catch (error) {
-        logger.error("Tool execution error", { error });
+        logger.error("Tool execution error", {
+          error: sanitizeForLog(error),
+        });
         if (axios.isAxiosError(error)) {
           throw new McpError(
             ErrorCode.InternalError,
@@ -2324,11 +2360,11 @@ class BitbucketServer {
 
       const params: Record<string, any> = {};
       if (name) {
-        params.q = `name~"${name}"`;
+        params.q = buildRepositoryNameFilter(name);
       }
 
       const repositories = await this.paginator.fetchValues<BitbucketRepository>(
-        `/repositories/${wsName}`,
+        `/repositories/${encodePathSegment(wsName)}`,
         {
           pagelen: pagelen ?? legacyLimit,
           page,
@@ -2347,7 +2383,7 @@ class BitbucketServer {
         ],
       };
     } catch (error) {
-      logger.error("Error listing repositories", { error, workspace, name });
+      logger.error("Error listing repositories", { error: sanitizeForLog(error), workspace, name });
       throw new McpError(
         ErrorCode.InternalError,
         `Failed to list repositories: ${
@@ -2365,7 +2401,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}`
       );
 
       return {
@@ -2377,7 +2413,7 @@ class BitbucketServer {
         ],
       };
     } catch (error) {
-      logger.error("Error getting repository", { error, workspace, repo_slug });
+      logger.error("Error getting repository", { error: sanitizeForLog(error), workspace, repo_slug });
       throw new McpError(
         ErrorCode.InternalError,
         `Failed to get repository: ${
@@ -2395,7 +2431,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/effective-default-reviewers`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/effective-default-reviewers`
       );
 
       return {
@@ -2408,7 +2444,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting effective default reviewers", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -2446,7 +2482,7 @@ class BitbucketServer {
       }
 
       const result = await this.paginator.fetchValues<BitbucketPullRequest>(
-        `/repositories/${workspace}/${repo_slug}/pullrequests`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests`,
         {
           pagelen: pagelen ?? legacyLimit,
           page,
@@ -2466,7 +2502,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull requests", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -2543,7 +2579,7 @@ class BitbucketServer {
 
       // Create the pull request
       const response = await this.api.post(
-        `/repositories/${workspace}/${repo_slug}/pullrequests`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests`,
         requestPayload
       );
 
@@ -2557,7 +2593,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error creating pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -2583,7 +2619,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}`
       );
 
       return {
@@ -2596,7 +2632,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request details", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -2630,7 +2666,7 @@ class BitbucketServer {
       if (description !== undefined) updateData.description = description;
 
       const response = await this.api.put(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}`,
         updateData
       );
 
@@ -2644,7 +2680,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error updating pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -2677,7 +2713,7 @@ class BitbucketServer {
       });
 
       const result = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/activity`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/activity`,
         {
           pagelen,
           page,
@@ -2696,7 +2732,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request activity", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -2725,7 +2761,7 @@ class BitbucketServer {
       // Bitbucket Cloud returns 400 when this POST carries no body or no
       // Content-Type. Pass `{}` so axios infers `application/json`.
       const response = await this.api.post(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/approve`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/approve`,
         {}
       );
 
@@ -2739,7 +2775,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error approving pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -2766,7 +2802,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.delete(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/approve`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/approve`
       );
 
       return {
@@ -2779,7 +2815,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error unapproving pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -2810,7 +2846,7 @@ class BitbucketServer {
       const data = message ? { message } : {};
 
       const response = await this.api.post(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/decline`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/decline`,
         data
       );
 
@@ -2824,7 +2860,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error declining pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -2859,7 +2895,7 @@ class BitbucketServer {
       if (strategy) data.merge_strategy = strategy;
 
       const response = await this.api.post(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/merge`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/merge`,
         data
       );
 
@@ -2873,7 +2909,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error merging pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -2906,7 +2942,7 @@ class BitbucketServer {
       });
 
       const result = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/comments`,
         {
           pagelen,
           page,
@@ -2925,7 +2961,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request comments", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -2953,7 +2989,7 @@ class BitbucketServer {
 
       // First get the pull request details to extract commit information
       const prResponse = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}`
       );
 
       const sourceCommit = prResponse.data.source.commit.hash;
@@ -2961,7 +2997,7 @@ class BitbucketServer {
 
       // Construct the correct diff URL with the proper format
       // The format is: /repositories/{workspace}/{repo_slug}/diff/{source_repo}:{source_commit}%0D{destination_commit}?from_pullrequest_id={pr_id}&topic=true
-      const diffUrl = `/repositories/${workspace}/${repo_slug}/diff/${workspace}/${repo_slug}:${sourceCommit}%0D${destinationCommit}?from_pullrequest_id=${pull_request_id}&topic=true`;
+      const diffUrl = `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/diff/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}:${sourceCommit}%0D${destinationCommit}?from_pullrequest_id=${encodePathSegment(pull_request_id)}&topic=true`;
 
       const response = await this.api.get(diffUrl, {
         headers: {
@@ -2981,7 +3017,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request diff", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -3014,7 +3050,7 @@ class BitbucketServer {
       });
 
       const result = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/commits`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/commits`,
         {
           pagelen,
           page,
@@ -3033,7 +3069,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request commits", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -3098,7 +3134,7 @@ class BitbucketServer {
       }
 
       const response = await this.api.post(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/comments`,
         commentData
       );
 
@@ -3112,7 +3148,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error adding comment to pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -3134,7 +3170,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/branching-model`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/branching-model`
       );
 
       return {
@@ -3147,7 +3183,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting repository branching model", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -3171,7 +3207,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/branching-model/settings`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/branching-model/settings`
       );
 
       return {
@@ -3184,7 +3220,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting repository branching model settings", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -3220,7 +3256,7 @@ class BitbucketServer {
       if (branch_types) updateData.branch_types = branch_types;
 
       const response = await this.api.put(
-        `/repositories/${workspace}/${repo_slug}/branching-model/settings`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/branching-model/settings`,
         updateData
       );
 
@@ -3234,7 +3270,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error updating repository branching model settings", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -3258,7 +3294,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/effective-branching-model`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/effective-branching-model`
       );
 
       return {
@@ -3271,7 +3307,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting effective repository branching model", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -3292,7 +3328,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/workspaces/${workspace}/projects/${project_key}/branching-model`
+        `/workspaces/${encodePathSegment(workspace)}/projects/${encodePathSegment(project_key)}/branching-model`
       );
 
       return {
@@ -3305,7 +3341,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting project branching model", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         project_key,
       });
@@ -3329,7 +3365,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/workspaces/${workspace}/projects/${project_key}/branching-model/settings`
+        `/workspaces/${encodePathSegment(workspace)}/projects/${encodePathSegment(project_key)}/branching-model/settings`
       );
 
       return {
@@ -3342,7 +3378,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting project branching model settings", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         project_key,
       });
@@ -3378,7 +3414,7 @@ class BitbucketServer {
       if (branch_types) updateData.branch_types = branch_types;
 
       const response = await this.api.put(
-        `/workspaces/${workspace}/projects/${project_key}/branching-model/settings`,
+        `/workspaces/${encodePathSegment(workspace)}/projects/${encodePathSegment(project_key)}/branching-model/settings`,
         updateData
       );
 
@@ -3392,7 +3428,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error updating project branching model settings", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         project_key,
       });
@@ -3431,7 +3467,7 @@ class BitbucketServer {
       );
     } catch (error) {
       logger.error("Error adding pending comment to pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -3459,7 +3495,7 @@ class BitbucketServer {
 
       // First, get all pending comments for the pull request
       const commentsResult = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/comments`,
         {
           pagelen: BITBUCKET_MAX_PAGELEN,
           all: true,
@@ -3495,7 +3531,7 @@ class BitbucketServer {
       for (const comment of pendingComments) {
         try {
           const updateResponse = await this.api.put(
-            `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments/${comment.id}`,
+            `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/comments/${encodePathSegment(String(comment.id))}`,
             {
               content: comment.content,
               pending: false,
@@ -3533,7 +3569,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error publishing pending comments", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -3578,7 +3614,7 @@ class BitbucketServer {
       );
     } catch (error) {
       logger.error("Error creating draft pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -3605,7 +3641,7 @@ class BitbucketServer {
 
       // Update the pull request to set draft=false
       const response = await this.api.put(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}`,
         {
           draft: false,
         }
@@ -3621,7 +3657,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error publishing draft pull request", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -3649,7 +3685,7 @@ class BitbucketServer {
 
       // Update the pull request to set draft=true
       const response = await this.api.put(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}`,
         {
           draft: true,
         }
@@ -3665,7 +3701,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error converting pull request to draft", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -3720,7 +3756,7 @@ class BitbucketServer {
         // Get all repositories in the workspace (existing behavior)
         logger.info("Getting all repositories in workspace...");
         const reposResponse = await this.paginator.fetchValues(
-          `/repositories/${wsName}`,
+          `/repositories/${encodePathSegment(wsName)}`,
           {
             pagelen: BITBUCKET_MAX_PAGELEN,
             all: true,
@@ -3755,7 +3791,7 @@ class BitbucketServer {
 
             // Get open PRs for this repository with participants expanded
             const prsResponse = await this.api.get(
-              `/repositories/${wsName}/${repoSlug}/pullrequests`,
+              `/repositories/${encodePathSegment(wsName)}/${encodePathSegment(repoSlug)}/pullrequests`,
               {
                 params: {
                   state: "OPEN",
@@ -3813,7 +3849,9 @@ class BitbucketServer {
               },
             }));
           } catch (error) {
-            logger.error(`Error checking repository ${repoSlug}:`, error);
+            logger.error(`Error checking repository ${repoSlug}:`, {
+              error: sanitizeForLog(error),
+            });
             return [];
           }
         });
@@ -3866,7 +3904,7 @@ class BitbucketServer {
         ],
       };
     } catch (error) {
-      logger.error("Error getting pending review PRs:", error);
+      logger.error("Error getting pending review PRs:", { error: sanitizeForLog(error) });
       throw new McpError(
         ErrorCode.InternalError,
         `Failed to get pending review PRs: ${
@@ -3916,7 +3954,7 @@ class BitbucketServer {
       if (sort) params.sort = sort;
 
       const result = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pipelines`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pipelines`,
         {
           pagelen: pagelen ?? legacyLimit,
           page,
@@ -3936,7 +3974,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error listing pipeline runs", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -3962,7 +4000,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/pipelines/${pipeline_uuid}`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pipelines/${encodePathSegment(pipeline_uuid)}`
       );
 
       return {
@@ -3975,7 +4013,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pipeline run", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pipeline_uuid,
@@ -4043,7 +4081,7 @@ class BitbucketServer {
       }
 
       const response = await this.api.post(
-        `/repositories/${workspace}/${repo_slug}/pipelines`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pipelines`,
         requestData
       );
 
@@ -4057,7 +4095,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error running pipeline", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
       });
@@ -4085,7 +4123,7 @@ class BitbucketServer {
       // Bitbucket Cloud returns 400 when this POST carries no body or no
       // Content-Type. Pass `{}` so axios infers `application/json`.
       const response = await this.api.post(
-        `/repositories/${workspace}/${repo_slug}/pipelines/${pipeline_uuid}/stop`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pipelines/${encodePathSegment(pipeline_uuid)}/stop`,
         {}
       );
 
@@ -4099,7 +4137,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error stopping pipeline", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pipeline_uuid,
@@ -4132,7 +4170,7 @@ class BitbucketServer {
       });
 
       const result = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pipelines/${pipeline_uuid}/steps`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pipelines/${encodePathSegment(pipeline_uuid)}/steps`,
         {
           pagelen,
           page,
@@ -4151,7 +4189,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pipeline steps", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pipeline_uuid,
@@ -4180,7 +4218,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/pipelines/${pipeline_uuid}/steps/${step_uuid}`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pipelines/${encodePathSegment(pipeline_uuid)}/steps/${encodePathSegment(step_uuid)}`
       );
 
       return {
@@ -4193,7 +4231,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pipeline step", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pipeline_uuid,
@@ -4233,7 +4271,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/pipelines/${pipeline_uuid}/steps/${step_uuid}/log`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pipelines/${encodePathSegment(pipeline_uuid)}/steps/${encodePathSegment(step_uuid)}/log`,
         {
           maxRedirects: 5, // Follow redirects to S3
           responseType: "text",
@@ -4308,7 +4346,7 @@ class BitbucketServer {
           summaryParts.push(`Full log saved to: ${filePath}`);
         } catch (fileError) {
           logger.warn("Failed to save pipeline step log to file", {
-            error: fileError,
+            error: sanitizeForLog(fileError),
           });
           summaryParts.push(
             "Attempted to save the full log to a temporary file, but writing failed."
@@ -4338,7 +4376,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pipeline step logs", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pipeline_uuid,
@@ -4368,7 +4406,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments/${comment_id}`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/comments/${encodePathSegment(comment_id)}`
       );
 
       return {
@@ -4381,7 +4419,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request comment", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4412,7 +4450,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.put(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments/${comment_id}`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/comments/${encodePathSegment(comment_id)}`,
         {
           content: { raw: content },
         }
@@ -4425,7 +4463,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error updating pull request comment", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4455,7 +4493,7 @@ class BitbucketServer {
       });
 
       await this.api.delete(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments/${comment_id}`
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/comments/${encodePathSegment(comment_id)}`
       );
 
       return {
@@ -4463,7 +4501,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error deleting pull request comment", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4495,7 +4533,7 @@ class BitbucketServer {
       });
 
       const commentUrl = (id: string) =>
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments/${id}`;
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/comments/${encodePathSegment(String(id))}`;
       const resolveUrl = (id: string) => `${commentUrl(id)}/resolve`;
 
       // Bitbucket resolves comment *threads*, and the API expects the thread root comment ID.
@@ -4519,7 +4557,7 @@ class BitbucketServer {
         logger.warn(
           "Failed to resolve comment thread root; falling back to comment_id",
           {
-            error: lookupError,
+            error: sanitizeForLog(lookupError),
             workspace,
             repo_slug,
             pull_request_id,
@@ -4555,7 +4593,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error setting comment resolved state", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4590,7 +4628,7 @@ class BitbucketServer {
       });
 
       const result = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/diffstat`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/diffstat`,
         {
           pagelen,
           page,
@@ -4606,7 +4644,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request diffstat", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4633,7 +4671,7 @@ class BitbucketServer {
       });
 
       const response = await this.api.get(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/patch`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/patch`,
         {
           headers: { Accept: "text/plain" },
           responseType: "text",
@@ -4644,7 +4682,7 @@ class BitbucketServer {
       return { content: [{ type: "text", text: response.data }] };
     } catch (error) {
       logger.error("Error getting pull request patch", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4677,7 +4715,7 @@ class BitbucketServer {
       });
 
       const result = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/tasks`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/tasks`,
         {
           pagelen,
           page,
@@ -4693,7 +4731,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request tasks", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4727,7 +4765,7 @@ class BitbucketServer {
       if (state) data.state = state;
 
       const response = await this.api.post(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/tasks`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/tasks`,
         data
       );
 
@@ -4738,7 +4776,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error creating pull request task", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4766,7 +4804,7 @@ class BitbucketServer {
         task_id,
       });
 
-      const response = await this.api.get(`/tasks/${task_id}`);
+      const response = await this.api.get(`/tasks/${encodePathSegment(task_id)}`);
 
       return {
         content: [
@@ -4775,7 +4813,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request task", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4810,7 +4848,7 @@ class BitbucketServer {
       if (content !== undefined) data.content = content;
       if (state !== undefined) data.state = state;
 
-      const response = await this.api.put(`/tasks/${task_id}`, data);
+      const response = await this.api.put(`/tasks/${encodePathSegment(task_id)}`, data);
 
       return {
         content: [
@@ -4819,7 +4857,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error updating pull request task", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4848,14 +4886,14 @@ class BitbucketServer {
         task_id,
       });
 
-      await this.api.delete(`/tasks/${task_id}`);
+      await this.api.delete(`/tasks/${encodePathSegment(task_id)}`);
 
       return {
         content: [{ type: "text", text: "Task deleted successfully." }],
       };
     } catch (error) {
       logger.error("Error deleting pull request task", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4889,7 +4927,7 @@ class BitbucketServer {
       });
 
       const result = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/statuses`,
+        `/repositories/${encodePathSegment(workspace)}/${encodePathSegment(repo_slug)}/pullrequests/${encodePathSegment(pull_request_id)}/statuses`,
         {
           pagelen,
           page,
@@ -4915,7 +4953,7 @@ class BitbucketServer {
       };
     } catch (error) {
       logger.error("Error getting pull request statuses", {
-        error,
+        error: sanitizeForLog(error),
         workspace,
         repo_slug,
         pull_request_id,
@@ -4939,6 +4977,6 @@ class BitbucketServer {
 // Create and start the server
 const server = new BitbucketServer();
 server.run().catch((error) => {
-  logger.error("Server error", error);
+  logger.error("Server error", { error: sanitizeForLog(error) });
   process.exit(1);
 });
