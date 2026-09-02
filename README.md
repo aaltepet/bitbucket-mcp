@@ -39,6 +39,9 @@ The server authenticates with `BITBUCKET_TOKEN` as a Bearer token. Create a [wor
 3. Add **Write** scopes only if you will set `BITBUCKET_ENABLE_DANGEROUS=true`.
 4. Copy the token immediately. Bitbucket shows it once.
 
+A [personal api token](https://id.atlassian.com/manage-profile/security/api-tokens) will also work, which will allow
+access to all your the repositories.
+
 Do not commit the token. Enter it when you add the MCP in Cursor (next step).
 
 To confirm the token works:
